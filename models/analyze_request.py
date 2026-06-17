@@ -1,7 +1,7 @@
 # ===== Arquivo: models/analyze_request.py =====
 
 from pydantic import BaseModel
-from typing import Optional, List
+from typing import Any, Dict, Optional, List
 
 class AnalyzeRequest(BaseModel):
     agency_id: str
@@ -18,3 +18,5 @@ class AnalyzeRequest(BaseModel):
     voice_profile: Optional[str] = "CMO"          # "CMO" | "HEAD_GROWTH" | "PERFORMANCE_MIDIA"
     decision_mode: Optional[str] = "decision_brief"  # "decision_brief" | "narrativa" | "topicos"
     narrative_style: Optional[str] = "SCQA"       # "SCQA" | "piramide" | "livre"
+    source_mode: Optional[str] = None             # ex.: "api_direct_experiment"
+    external_data: Optional[Dict[str, Any]] = None # dados ja consumidos fora do banco

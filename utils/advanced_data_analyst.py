@@ -44,12 +44,25 @@ PLATFORM_SCHEMA = {
     "linkedin": {
         "impressions": "impressions",
         "followers": "followers"
+    },
+    "meta_ads": {
+        "investment": "investment",
+        "impressions": "impressions",
+        "reach": "reach",
+        "frequency": "frequency",
+        "cpm": "cpm",
+        "ctr": "ctr",
+        "cpc": "cpc",
+        "conversationsStarted": "conversations_started",
+        "roas": "roas",
+        "costPerLead": "cost_per_lead",
     }
 }
 # Métricas priorizadas (agora inclui GA)
 PREFERRED_BASES = (
     "reach", "views", "impressions", "followers",
-    "traffic_direct", "traffic_organic_search", "traffic_organic_social", "search_volume"
+    "traffic_direct", "traffic_organic_search", "traffic_organic_social", "search_volume",
+    "investment", "frequency", "cpm", "ctr", "cpc", "conversations_started", "roas", "cost_per_lead"
 )
 
 
@@ -190,6 +203,8 @@ class AnalysisPayload:
     voice_profile: str = "CMO"
     decision_mode: str = "decision_brief"
     narrative_style: str = "SCQA"
+    source_mode: Optional[str] = None
+    external_data: Optional[Dict[str, Any]] = None
 
 
 # =============================
@@ -546,23 +561,303 @@ class AdvancedDataAnalyst:
 
         return " | ".join(parts)
 
+    def _as_number(self, value: Any) -> float:
+        try:
+            if value is None or value == "":
+                return 0.0
+            n = float(value)
+            return n if np.isfinite(n) else 0.0
+        except Exception:
+            return 0.0
+
+    def _compact_meta_ads_row(self, row: Dict[str, Any], metrics: List[str]) -> Dict[str, Any]:
+        identity_keys = [
+            "id",
+            "name",
+            "campaignId",
+            "campaignName",
+            "adsetId",
+            "adsetName",
+            "objective",
+        ]
+        compact: Dict[str, Any] = {}
+        for key in identity_keys:
+            value = row.get(key)
+            if value not in (None, ""):
+                compact[key] = value
+        for metric in metrics:
+            if metric in row:
+                compact[metric] = round(self._as_number(row.get(metric)), 4)
+        return compact
+
+    def _top_meta_ads_rows(
+        self,
+        rows: List[Dict[str, Any]],
+        metrics: List[str],
+        sort_metric: str,
+        limit: int = 10,
+    ) -> List[Dict[str, Any]]:
+        if not rows:
+            return []
+        ordered = sorted(
+            rows,
+            key=lambda item: self._as_number(item.get(sort_metric)),
+            reverse=True,
+        )
+        return [self._compact_meta_ads_row(row, metrics) for row in ordered[:limit]]
+
+    def _meta_ads_level_stats(
+        self,
+        rows: List[Dict[str, Any]],
+        metrics: List[str],
+    ) -> Dict[str, Any]:
+        additive = {
+            "investment",
+            "impressions",
+            "reach",
+            "conversationsStarted",
+            "leads",
+        }
+        totals: Dict[str, float] = {}
+        averages: Dict[str, float] = {}
+
+        for metric in metrics:
+            values = [
+                self._as_number(row.get(metric))
+                for row in rows
+                if row.get(metric) not in (None, "")
+            ]
+            if not values:
+                continue
+            if metric in additive:
+                totals[metric] = round(float(sum(values)), 4)
+            else:
+                averages[metric] = round(float(sum(values) / len(values)), 4)
+
+        return {
+            "rows": len(rows),
+            "totals": totals,
+            "averages": averages,
+        }
+
+    def _build_meta_ads_external_summary(
+        self,
+        external_data: Dict[str, Any],
+        platforms: List[str],
+        start_date: Optional[str],
+        end_date: Optional[str],
+    ) -> Optional[Dict[str, Any]]:
+        meta_ads = external_data.get("meta_ads") if isinstance(external_data, dict) else None
+        if not isinstance(meta_ads, dict):
+            meta_ads = external_data if isinstance(external_data, dict) else {}
+        if not isinstance(meta_ads, dict) or "campaign" not in meta_ads:
+            return None
+
+        campaigns = [row for row in (meta_ads.get("campaign") or []) if isinstance(row, dict)]
+        ad_sets = [row for row in (meta_ads.get("adSet") or []) if isinstance(row, dict)]
+        ads = [row for row in (meta_ads.get("ad") or []) if isinstance(row, dict)]
+        api_summary = meta_ads.get("summary") if isinstance(meta_ads.get("summary"), dict) else {}
+        period_raw = meta_ads.get("period") if isinstance(meta_ads.get("period"), dict) else {}
+
+        campaign_metrics = [
+            "investment",
+            "impressions",
+            "reach",
+            "frequency",
+            "cpm",
+            "conversationsStarted",
+            "leads",
+            "roas",
+            "costPerLead",
+        ]
+        ad_set_metrics = ["investment", "reach", "frequency", "cpm", "ctr"]
+        ad_metrics = [
+            "impressions",
+            "ctr",
+            "cpc",
+            "cpm",
+            "leads",
+            "conversationsStarted",
+            "costPerLead",
+        ]
+
+        selected_metrics = [
+            "meta_ads_investment",
+            "meta_ads_impressions",
+            "meta_ads_reach",
+            "meta_ads_frequency",
+            "meta_ads_cpm",
+            "meta_ads_ctr",
+            "meta_ads_cpc",
+            "meta_ads_conversations_started",
+            "meta_ads_roas",
+            "meta_ads_cost_per_lead",
+        ]
+
+        kpis: Dict[str, Dict[str, float]] = {}
+        for source_key, metric_key in [
+            ("investment", "meta_ads_investment"),
+            ("impressions", "meta_ads_impressions"),
+            ("reach", "meta_ads_reach"),
+            ("conversationsStarted", "meta_ads_conversations_started"),
+            ("leads", "meta_ads_leads"),
+            ("roas", "meta_ads_roas"),
+            ("costPerLead", "meta_ads_cost_per_lead"),
+        ]:
+            if source_key in api_summary:
+                kpis[metric_key] = {"sum": round(self._as_number(api_summary.get(source_key)), 4)}
+
+        timings = external_data.get("timings_ms") if isinstance(external_data.get("timings_ms"), dict) else {}
+        resource = meta_ads.get("resource") if isinstance(meta_ads.get("resource"), dict) else {}
+
+        return {
+            "period": {
+                "start": period_raw.get("startDate") or period_raw.get("start") or start_date,
+                "end": period_raw.get("endDate") or period_raw.get("end") or end_date,
+            },
+            "kpis": kpis,
+            "anomalies": {},
+            "trends": {},
+            "segments": {},
+            "meta": {
+                "platforms": platforms,
+                "columns": selected_metrics,
+                "selected_metrics": selected_metrics,
+                "source_mode": external_data.get("source_mode") or "api_gateway_direct",
+                "external_source": external_data.get("source") or "api_gateway",
+                "timings_ms": timings,
+            },
+            "highlights": {
+                "meta_ads_campaigns_by_investment": self._top_meta_ads_rows(
+                    campaigns,
+                    campaign_metrics,
+                    "investment",
+                ),
+                "meta_ads_campaigns_by_conversations": self._top_meta_ads_rows(
+                    campaigns,
+                    campaign_metrics,
+                    "conversationsStarted",
+                ),
+                "meta_ads_adsets_by_investment": self._top_meta_ads_rows(
+                    ad_sets,
+                    ad_set_metrics,
+                    "investment",
+                ),
+                "meta_ads_ads_by_impressions": self._top_meta_ads_rows(
+                    ads,
+                    ad_metrics,
+                    "impressions",
+                ),
+                "meta_ads_ads_by_ctr": self._top_meta_ads_rows(
+                    ads,
+                    ad_metrics,
+                    "ctr",
+                ),
+            },
+            "paid_media": {
+                "platform": "meta_ads",
+                "resource": {
+                    "id": resource.get("id") or meta_ads.get("adAccountId"),
+                    "name": resource.get("name"),
+                },
+                "fetched_at": meta_ads.get("fetchedAt") or external_data.get("fetched_at"),
+                "row_counts": {
+                    "campaign": len(campaigns),
+                    "adSet": len(ad_sets),
+                    "ad": len(ads),
+                },
+                "summary": api_summary,
+                "campaign": self._meta_ads_level_stats(campaigns, campaign_metrics),
+                "adSet": self._meta_ads_level_stats(ad_sets, ad_set_metrics),
+                "ad": self._meta_ads_level_stats(ads, ad_metrics),
+            },
+        }
+
+    def _combine_summaries(
+        self,
+        db_summary: Optional[Dict[str, Any]],
+        external_summary: Optional[Dict[str, Any]],
+        platforms: List[str],
+    ) -> Dict[str, Any]:
+        if not db_summary:
+            return external_summary or {
+                "period": {"start": None, "end": None},
+                "kpis": {},
+                "anomalies": {},
+                "trends": {},
+                "segments": {},
+                "meta": {"platforms": platforms, "columns": [], "selected_metrics": []},
+            }
+        if not external_summary:
+            db_summary.setdefault("meta", {})["platforms"] = platforms
+            return db_summary
+
+        combined = {
+            "period": external_summary.get("period") or db_summary.get("period"),
+            "kpis": {**(db_summary.get("kpis") or {}), **(external_summary.get("kpis") or {})},
+            "anomalies": {**(db_summary.get("anomalies") or {}), **(external_summary.get("anomalies") or {})},
+            "trends": {**(db_summary.get("trends") or {}), **(external_summary.get("trends") or {})},
+            "segments": {**(db_summary.get("segments") or {}), **(external_summary.get("segments") or {})},
+            "highlights": {**(db_summary.get("highlights") or {}), **(external_summary.get("highlights") or {})},
+            "period_compare": db_summary.get("period_compare") or {},
+            "paid_media": external_summary.get("paid_media"),
+        }
+
+        db_meta = db_summary.get("meta") or {}
+        ext_meta = external_summary.get("meta") or {}
+        selected = list(dict.fromkeys([
+            *(db_meta.get("selected_metrics") or []),
+            *(ext_meta.get("selected_metrics") or []),
+        ]))
+        columns = list(dict.fromkeys([
+            *(db_meta.get("columns") or []),
+            *(ext_meta.get("columns") or []),
+        ]))
+        combined["meta"] = {
+            **db_meta,
+            **ext_meta,
+            "platforms": platforms,
+            "columns": columns,
+            "selected_metrics": selected,
+            "source_mode": ext_meta.get("source_mode"),
+        }
+        return combined
+
     def get_client_agent(self,
                          agency_id: str,
                          client_id: str,
                          platforms: List[str],
                          start_date: Optional[str],
-                         end_date: Optional[str]) -> Callable[[str, str, bool], Dict[str, Any]]:
+                         end_date: Optional[str],
+                         external_data: Optional[Dict[str, Any]] = None) -> Callable[[str, str, bool], Dict[str, Any]]:
+        external_summary = None
+        external_platforms: List[str] = []
+        if isinstance(external_data, dict):
+            external_summary = self._build_meta_ads_external_summary(
+                external_data=external_data,
+                platforms=platforms,
+                start_date=start_date,
+                end_date=end_date,
+            )
+            if external_summary:
+                external_platforms.append("meta_ads")
+
+        db_platforms = [p for p in platforms if p not in external_platforms]
+
         # 1) Carregar e normalizar DFs por plataforma
         dfs: List[pd.DataFrame] = []
-        for p in platforms:
+        for p in db_platforms:
             dfp = self._load_platform_df(agency_id, client_id, p, start_date, end_date)
             if not dfp.empty:
                 dfs.append(dfp)
         merged_df = self._merge_platform_dfs(dfs)
 
         # 2) Computar resumo determinístico
-        summary = self._compute_summary(merged_df, platforms)
-        summary = self._enrich_summary(merged_df, platforms, summary)
+        db_summary = None
+        if db_platforms:
+            db_summary = self._compute_summary(merged_df, db_platforms)
+            db_summary = self._enrich_summary(merged_df, db_platforms, db_summary)
+        summary = self._combine_summaries(db_summary, external_summary, platforms)
 
         # 3) Cache por cliente + plataformas + período
         key_platforms = "_".join(sorted(platforms))
@@ -639,6 +934,8 @@ class AdvancedDataAnalyst:
             voice_profile=str(payload.get("voice_profile") or "CMO"),
             decision_mode=str(payload.get("decision_mode") or "decision_brief"),
             narrative_style=str(payload.get("narrative_style") or "SCQA"),
+            source_mode=payload.get("source_mode") or None,
+            external_data=payload.get("external_data") if isinstance(payload.get("external_data"), dict) else None,
         )
 
         # Normaliza o decision_mode a partir do output_format escolhido na UI
@@ -666,6 +963,7 @@ class AdvancedDataAnalyst:
             platforms=ap.platforms,
             start_date=ap.start_date,
             end_date=ap.end_date,
+            external_data=ap.external_data,
         )
 
         # Se não vier pergunta específica, monta uma a partir dos templates

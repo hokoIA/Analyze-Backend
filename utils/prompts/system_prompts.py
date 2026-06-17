@@ -33,6 +33,7 @@ PLATFORM_DISPLAY = {
     "facebook": "Facebook",
     "google_analytics": "Google Analytics",
     "linkedin": "LinkedIn",
+    "meta_ads": "Meta Ads",
 }
 
 BASE_LABELS = {
@@ -44,9 +45,22 @@ BASE_LABELS = {
     "traffic_organic_search": "Tráfego — Busca Orgânica",
     "traffic_organic_social": "Tráfego — Social Orgânico",
     "search_volume": "Volume de Busca",
+    "investment": "Investimento",
+    "frequency": "Frequencia",
+    "cpm": "CPM",
+    "ctr": "CTR",
+    "cpc": "CPC",
+    "conversations_started": "Conversas iniciadas",
+    "roas": "ROAS",
+    "cost_per_lead": "Custo por lead",
+    "leads": "Leads",
 }
 
 def _split_platform_and_base(col: str) -> Tuple[str, str]:
+    for platform in sorted(PLATFORM_DISPLAY.keys(), key=len, reverse=True):
+        prefix = f"{platform}_"
+        if col.startswith(prefix):
+            return platform, col[len(prefix):]
     if "_" not in col: return "", col
     p, b = col.split("_", 1)
     return p, b
