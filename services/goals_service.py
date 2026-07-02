@@ -232,15 +232,13 @@ def generate_goal_suggestions(payload: Dict[str, Any]) -> Dict[str, Any]:
     from utils.prompts.goals_prompts import GOAL_SUGGESTIONS_SYSTEM
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
-    model_name = os.getenv("OPENAI_MODEL", "gpt-4.1-mini")
 
     resp = client.chat.completions.create(
-        model=model_name,
+        model="gpt-5.4",
         messages=[
             {"role": "system", "content": GOAL_SUGGESTIONS_SYSTEM},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}
         ],
-        temperature=0.4
     )
 
     text = resp.choices[0].message.content.strip()

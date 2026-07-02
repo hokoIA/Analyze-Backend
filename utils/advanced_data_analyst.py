@@ -445,8 +445,7 @@ class AdvancedDataAnalyst:
 
         # Config mais adequada para narrativa: criatividade moderada, pouca repetição
         llm = ChatOpenAI(
-            model="gpt-4.1",
-            temperature=0.7,
+            model="gpt-5.4",
             presence_penalty=0.1,
             frequency_penalty=0.1,
             api_key=self.openai_api_key,
