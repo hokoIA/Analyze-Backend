@@ -2,6 +2,7 @@
 import os
 from openai import OpenAI
 from utils.db.vector_db import VectorDBManager
+from utils.llm.config import get_llm_config
 from utils.prompts.system_prompts import build_chat_system_prompt
 
 
@@ -12,6 +13,7 @@ class ChatService:
             openai_api_key=os.getenv("OPENAI_API_KEY")
         )
         self.client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+        self.llm_config = get_llm_config()
 
     def generate_chat_response(self, customer_id: int, client_name: str, client_id: int, prompt: str, history: list):
         vectordb = self.vector_db_manager.create_or_load_vector_db(str(customer_id), str(client_id))
@@ -41,9 +43,9 @@ class ChatService:
         openai_messages.append({"role": "user", "content": prompt})
 
         response = self.client.chat.completions.create(
-            model="gpt-4o",
+            model=self.llm_config.chat_model,
             messages=openai_messages,
-            temperature=0.3
+            temperature=self.llm_config.chat_temperature
         )
 
         return response.choices[0].message.content

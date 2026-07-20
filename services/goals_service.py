@@ -229,12 +229,14 @@ def generate_goal_suggestions(payload: Dict[str, Any]) -> Dict[str, Any]:
     from openai import OpenAI
     import os
     import json
+    from utils.llm.config import get_llm_config
     from utils.prompts.goals_prompts import GOAL_SUGGESTIONS_SYSTEM
 
     client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    llm_config = get_llm_config()
 
     resp = client.chat.completions.create(
-        model="gpt-5.4",
+        model=llm_config.goals_model,
         messages=[
             {"role": "system", "content": GOAL_SUGGESTIONS_SYSTEM},
             {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}

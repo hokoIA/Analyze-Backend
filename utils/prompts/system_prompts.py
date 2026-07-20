@@ -1,6 +1,11 @@
 # ===== utils/prompts/system_prompts.py  —  SSOT de prompts ho.ko =====
 from __future__ import annotations
 from typing import List, Dict, Any, Tuple
+from utils.prompts.analysis import AnalysisPromptInput
+from utils.prompts.analysis import get_business_analysis_query as get_modular_business_analysis_query
+from utils.prompts.analysis import get_default_analysis_query as get_modular_default_analysis_query
+from utils.prompts.analysis import render_analysis_prompt as render_modular_analysis_prompt
+from utils.prompts.analysis import render_refine_prompt as render_modular_refine_prompt
 
 # =========================
 # 0) Identidade da Marca
@@ -275,6 +280,8 @@ PLATFORM_PROMPTS = {
 def _fmt_platforms(platforms: List[str]) -> str:
     if not platforms: return "todas as plataformas"
     label = [PLATFORM_DISPLAY.get(p,p) for p in platforms]
+    if len(label) == 1:
+        return label[0]
     return ", ".join(label[:-1]) + (" e " + label[-1] if len(label)>1 else "")
 
 def get_platform_prompt(platforms: List[str]) -> str:
@@ -631,4 +638,51 @@ def build_narrative_prompt(
 
         {examples_block}
     """.strip()
+
+
+# Bloco B da migracao de prompts:
+# mantem a assinatura publica usada pelo AdvancedDataAnalyst, mas delega a
+# montagem para o renderer modular baseado em arquivos editaveis.
+def build_narrative_prompt(
+    platforms: List[str],
+    analysis_type: str,
+    analysis_focus: str,
+    analysis_query: str,
+    context_text: str,
+    summary_json: Dict[str, Any],
+    output_format: str = "detalhada",
+    granularity: str = "detalhada",
+    bilingual: bool = True,
+    voice_profile: str = "CMO",
+    decision_mode: str = "decision_brief",
+    narrative_style: str = "SCQA"
+) -> str:
+    return render_modular_analysis_prompt(
+        AnalysisPromptInput(
+            platforms=platforms,
+            analysis_type=analysis_type,
+            analysis_focus=analysis_focus,
+            analysis_query=analysis_query,
+            context_text=context_text,
+            summary_json=summary_json,
+            output_format=output_format,
+            granularity=granularity,
+            bilingual=bilingual,
+            voice_profile=voice_profile,
+            decision_mode=decision_mode,
+            narrative_style=narrative_style,
+        )
+    )
+
+
+def get_analysis_prompt(analysis_type: str, platforms: list[str], date_filter: str = "") -> str:
+    return get_modular_default_analysis_query(analysis_type, platforms, date_filter)
+
+
+def get_business_analysis_query() -> str:
+    return get_modular_business_analysis_query()
+
+
+def render_refine_prompt(text: str, summary_json: Dict[str, Any]) -> str:
+    return render_modular_refine_prompt(text, summary_json)
 

@@ -1,7 +1,6 @@
 .env
 .venv
-__pycache__/*
+__pycache__/
+**/__pycache__/
+*.pyc
 __init__.py
-
-*/__pycache__
-*/__pycache__/*
