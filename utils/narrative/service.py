@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any, Callable, Dict, List, Optional
 
+from utils.debug.prompt_debug_logger import PromptDebugLogger
 from utils.llm.config import LLMConfig
 from utils.prompts.system_prompts import (
     build_chat_system_prompt,
@@ -17,10 +18,12 @@ class AnalysisNarrativeService:
         llm_config: LLMConfig,
         openai_api_key: Optional[str],
         chat_model_cls: Optional[Callable[..., Any]],
+        debug_logger: Optional[PromptDebugLogger] = None,
     ):
         self.llm_config = llm_config
         self.openai_api_key = openai_api_key
         self.chat_model_cls = chat_model_cls
+        self.debug_logger = debug_logger or PromptDebugLogger()
 
     def generate(
         self,
@@ -37,6 +40,7 @@ class AnalysisNarrativeService:
         granularity: str = "detalhada",
         decision_mode: str = "decision_brief",
         narrative_style: str = "SCQA",
+        debug_request_id: Optional[str] = None,
     ) -> str:
         system_content = build_chat_system_prompt(
             client_name=client_name,
@@ -57,6 +61,21 @@ class AnalysisNarrativeService:
             decision_mode=decision_mode,
             narrative_style=narrative_style,
         )
+        self.debug_logger.log_json(
+            "analysis_llm_model_config",
+            self.llm_config.analysis_chat_openai_kwargs(self.openai_api_key),
+            request_id=debug_request_id,
+        )
+        self.debug_logger.log_text(
+            "analysis_system_prompt_final",
+            system_content,
+            request_id=debug_request_id,
+        )
+        self.debug_logger.log_text(
+            "analysis_user_prompt_final",
+            user_content,
+            request_id=debug_request_id,
+        )
         if self.chat_model_cls is None:
             return (
                 "[Aviso: ChatOpenAI indisponível no ambiente]\n\n"
@@ -71,22 +90,49 @@ class AnalysisNarrativeService:
             {"role": "user", "content": user_content},
         ]
         first = llm.invoke(messages).content
-        refined = self.refine_if_generic(llm, first, summary)
-        return self.postprocess_output(refined, output_format)
+        self.debug_logger.log_text(
+            "analysis_llm_first_output",
+            first,
+            request_id=debug_request_id,
+        )
+        refined = self.refine_if_generic(llm, first, summary, debug_request_id=debug_request_id)
+        final_output = self.postprocess_output(refined, output_format)
+        self.debug_logger.log_text(
+            "analysis_llm_final_output",
+            final_output,
+            request_id=debug_request_id,
+        )
+        return final_output
 
-    def refine_if_generic(self, llm: Any, text: str, summary: Dict[str, Any]) -> str:
+    def refine_if_generic(
+        self,
+        llm: Any,
+        text: str,
+        summary: Dict[str, Any],
+        debug_request_id: Optional[str] = None,
+    ) -> str:
         has_number = bool(re.search(r"\d{2}/\d{2}|\d{4}-\d{2}-\d{2}|\b\d{2,}[.,]?\d*\b", text))
         has_date = bool(re.search(r"\b\d{1,2}/\d{1,2}\b|\b\d{4}-\d{2}-\d{2}\b", text))
         if has_number and has_date:
             return text
 
         refine_prompt = render_refine_prompt(text, summary)
+        self.debug_logger.log_text(
+            "analysis_refine_prompt_final",
+            refine_prompt,
+            request_id=debug_request_id,
+        )
         out = llm.invoke(
             [
                 {"role": "system", "content": "Você é um editor sênior objetivo e técnico."},
                 {"role": "user", "content": refine_prompt},
             ]
         ).content
+        self.debug_logger.log_text(
+            "analysis_refine_output",
+            out,
+            request_id=debug_request_id,
+        )
         return out or text
 
     def postprocess_output(self, text: str, output_format: str) -> str:

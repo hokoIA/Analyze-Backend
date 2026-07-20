@@ -7,7 +7,30 @@ Camada Python responsavel por receber dados ja preparados pelo API Gateway, mont
 - O endpoint e o payload de entrada nao devem ser alterados sem coordenar com o API Gateway.
 - Esta camada nao busca dados nas plataformas diretamente no fluxo de analise.
 - Dados externos enviados em `external_data`, como `meta_ads` e `instagram_posts`, sao apenas organizados internamente em `summary`.
-- Tokens, chaves, payloads sensiveis e dados reais de cliente nao devem ser gravados em prompts, testes ou logs.
+- Tokens, chaves e payloads sensiveis nao devem ser gravados em prompts, testes ou logs. Dados reais de cliente so devem aparecer no debug temporario de prompts, com flag explicita e desligado apos o teste.
+
+## Debug temporario de prompts no Render
+
+Use apenas para auditoria pontual em producao e desligue depois do teste, porque os logs podem conter metricas, legendas de posts, contexto do cliente e trechos de documentos. Tokens, senhas e chaves sao mascarados automaticamente por chave e padrao de valor.
+
+Variaveis:
+
+- `ANALYZE_DEBUG_PROMPT_LOGS=true`: liga os logs detalhados do fluxo de analise.
+- `ANALYZE_DEBUG_PROMPT_SUMMARY_ONLY=true`: opcional; mostra apenas formato/preview dos dados, sem despejar tudo.
+- `ANALYZE_DEBUG_PROMPT_CHUNK_SIZE=12000`: opcional; tamanho dos blocos impressos no console.
+- `ANALYZE_DEBUG_PROMPT_MAX_CHARS=0`: opcional; `0` deixa sem corte, outro numero limita cada evento.
+
+Eventos principais no console:
+
+- `analysis_request_received`: configuracao recebida da analise.
+- `analysis_external_data_received`: dados enviados pelo API Gateway em `external_data`.
+- `analysis_external_summary_built`: resumo gerado a partir dos dados externos.
+- `analysis_db_platform_dataframe`: dados organicos carregados do banco por plataforma.
+- `analysis_merged_dataframe`: dados organicos finais consolidados.
+- `analysis_final_summary_sent_to_prompt`: `summary` final usado no prompt.
+- `analysis_rag_query` e `analysis_rag_context_retrieved`: busca e contexto recuperado.
+- `analysis_system_prompt_final` e `analysis_user_prompt_final`: prompts finais enviados ao LLM.
+- `analysis_llm_first_output`, `analysis_refine_prompt_final`, `analysis_refine_output` e `analysis_llm_final_output`: resposta bruta, refinamento quando houver e resposta final.
 
 ## Onde editar prompts
 

@@ -2,11 +2,13 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Callable, Dict, List, Optional
+from uuid import uuid4
 import os
 import pandas as pd
 from utils.db.relational_db import RelationalDBManager
 from utils.db.vector_db import VectorDBManager
 from utils.dataframe import PlatformDataFrameNormalizer
+from utils.debug.prompt_debug_logger import PromptDebugLogger
 from utils.external_data import ExternalDataSummaryBuilder
 from utils.llm.config import get_llm_config
 from utils.narrative import AnalysisNarrativeService
@@ -73,10 +75,12 @@ class AdvancedDataAnalyst:
         self.external_summary_builder = ExternalDataSummaryBuilder()
         self.rag_query_builder = RAGQueryBuilder()
         self.organic_summary_builder = OrganicSummaryBuilder()
+        self.debug_logger = PromptDebugLogger()
         self.narrative_service = AnalysisNarrativeService(
             llm_config=self.llm_config,
             openai_api_key=self.openai_api_key,
             chat_model_cls=ChatOpenAI,
+            debug_logger=self.debug_logger,
         )
 
     # --------- Data loading ---------
@@ -117,7 +121,8 @@ class AdvancedDataAnalyst:
                         context_text: str,
                         summary: Dict[str, Any],
                         output_format: str = "detalhado",
-                        bilingual: bool = True) -> str:
+                        bilingual: bool = True,
+                        debug_request_id: Optional[str] = None) -> str:
         return self.narrative_service.generate(
             platforms=platforms,
             analysis_type=analysis_type,
@@ -132,6 +137,7 @@ class AdvancedDataAnalyst:
             granularity=getattr(self, "current_granularity", "detalhada"),
             decision_mode=getattr(self, "decision_mode", "decision_brief"),
             narrative_style=getattr(self, "narrative_style", "SCQA"),
+            debug_request_id=debug_request_id,
         )
 
     # --------- Public API ---------
@@ -141,12 +147,26 @@ class AdvancedDataAnalyst:
                          platforms: List[str],
                          start_date: Optional[str],
                          end_date: Optional[str],
-                         external_data: Optional[Dict[str, Any]] = None) -> Callable[[str, str, bool], Dict[str, Any]]:
+                         external_data: Optional[Dict[str, Any]] = None,
+                         debug_request_id: Optional[str] = None) -> Callable[[str, str, bool], Dict[str, Any]]:
+        self.debug_logger.log_json(
+            "analysis_external_data_received",
+            external_data or {},
+            request_id=debug_request_id,
+        )
         external_summary, external_platforms = self.external_summary_builder.build(
             external_data=external_data,
             platforms=platforms,
             start_date=start_date,
             end_date=end_date,
+        )
+        self.debug_logger.log_json(
+            "analysis_external_summary_built",
+            {
+                "external_platforms": external_platforms,
+                "external_summary": external_summary,
+            },
+            request_id=debug_request_id,
         )
 
         db_platforms = [p for p in platforms if p not in external_platforms]
@@ -155,15 +175,39 @@ class AdvancedDataAnalyst:
         dfs: List[pd.DataFrame] = []
         for p in db_platforms:
             dfp = self._load_platform_df(agency_id, client_id, p, start_date, end_date)
+            self.debug_logger.log_json(
+                "analysis_db_platform_dataframe",
+                {
+                    "platform": p,
+                    "rows": int(len(dfp.index)),
+                    "columns": list(dfp.columns),
+                    "data": dfp.to_dict(orient="records"),
+                },
+                request_id=debug_request_id,
+            )
             if not dfp.empty:
                 dfs.append(dfp)
         merged_df = self._merge_platform_dfs(dfs)
+        self.debug_logger.log_json(
+            "analysis_merged_dataframe",
+            {
+                "rows": int(len(merged_df.index)),
+                "columns": list(merged_df.columns),
+                "data": merged_df.to_dict(orient="records"),
+            },
+            request_id=debug_request_id,
+        )
 
         # 2) Computar resumo determinístico
         db_summary = None
         if db_platforms:
             db_summary = self.organic_summary_builder.build(merged_df, db_platforms)
         summary = self.external_summary_builder.combine_summaries(db_summary, external_summary, platforms)
+        self.debug_logger.log_json(
+            "analysis_final_summary_sent_to_prompt",
+            summary,
+            request_id=debug_request_id,
+        )
 
         # 3) Cache por cliente + plataformas + período
         key_platforms = "_".join(sorted(platforms))
@@ -189,6 +233,11 @@ class AdvancedDataAnalyst:
                 analysis_type=atype,
                 analysis_focus=focus,
             )
+            self.debug_logger.log_text(
+                "analysis_rag_query",
+                rag_query,
+                request_id=debug_request_id,
+            )
 
             # 4.2) Buscar contexto histórico no Pinecone
             context_text = self.vector_db.retrieve_context_for_analysis(
@@ -197,6 +246,11 @@ class AdvancedDataAnalyst:
                 agency_id=agency_id,
                 client_id=client_id,
                 k_total=8,
+            )
+            self.debug_logger.log_text(
+                "analysis_rag_context_retrieved",
+                context_text,
+                request_id=debug_request_id,
             )
 
             # 4.3) Gerar narrativa (LLM apenas redige)
@@ -208,6 +262,7 @@ class AdvancedDataAnalyst:
                 summary=summary,
                 output_format=output_format,
                 bilingual=bilingual,
+                debug_request_id=debug_request_id,
             )
             return {"summary": summary, "analysis": analysis_text}
 
@@ -215,6 +270,7 @@ class AdvancedDataAnalyst:
 
     def run_analysis(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         start_time = datetime.now()
+        debug_request_id = f"analysis-{uuid4()}"
         raw_platforms = payload.get("platforms") or []
         platforms_list = [str(p) for p in raw_platforms]
 
@@ -254,6 +310,28 @@ class AdvancedDataAnalyst:
         else:
             ap.decision_mode = "narrativa"
 
+        self.debug_logger.log_json(
+            "analysis_request_received",
+            {
+                "request_id": debug_request_id,
+                "agency_id": ap.agency_id,
+                "client_id": ap.client_id,
+                "platforms": ap.platforms,
+                "analysis_focus": ap.analysis_focus,
+                "analysis_type": ap.analysis_type,
+                "start_date": ap.start_date,
+                "end_date": ap.end_date,
+                "output_format": ap.output_format,
+                "granularity": ap.granularity,
+                "voice_profile": ap.voice_profile,
+                "decision_mode": ap.decision_mode,
+                "narrative_style": ap.narrative_style,
+                "source_mode": ap.source_mode,
+                "analysis_query": ap.analysis_query,
+            },
+            request_id=debug_request_id,
+        )
+
 
         # Guardar o tipo de análise corrente para o _invoke usar
         self.voice_profile = ap.voice_profile
@@ -270,6 +348,7 @@ class AdvancedDataAnalyst:
             start_date=ap.start_date,
             end_date=ap.end_date,
             external_data=ap.external_data,
+            debug_request_id=debug_request_id,
         )
 
         # Se não vier pergunta específica, monta uma a partir dos templates
@@ -285,6 +364,11 @@ class AdvancedDataAnalyst:
                 elif ap.end_date:
                     date_filter = f" até {ap.end_date}"
                 ap.analysis_query = get_analysis_prompt(ap.analysis_type, ap.platforms, date_filter)
+        self.debug_logger.log_text(
+            "analysis_effective_user_query",
+            ap.analysis_query or "",
+            request_id=debug_request_id,
+        )
         try:
             result = invoke_func(ap.analysis_query, ap.output_format, ap.bilingual)
             status = "success"
