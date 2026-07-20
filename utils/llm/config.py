@@ -5,6 +5,10 @@ from os import environ
 from typing import Dict, Mapping, Optional
 
 
+STRICT_ANALYSIS_MODELS = {"gpt-5.6-sol"}
+STRICT_ANALYSIS_TEMPERATURE = 1
+
+
 def _env_text(env: Mapping[str, str], key: str, default: str) -> str:
     value = env.get(key)
     if value is None or not value.strip():
@@ -45,11 +49,16 @@ class LLMConfig:
     def analysis_chat_openai_kwargs(self, api_key: Optional[str]) -> Dict[str, object]:
         kwargs: Dict[str, object] = {
             "model": self.analysis_model,
-            "presence_penalty": self.analysis_presence_penalty,
-            "frequency_penalty": self.analysis_frequency_penalty,
             "api_key": api_key,
         }
-        if self.analysis_temperature is not None:
+
+        if self.analysis_model not in STRICT_ANALYSIS_MODELS:
+            kwargs["presence_penalty"] = self.analysis_presence_penalty
+            kwargs["frequency_penalty"] = self.analysis_frequency_penalty
+
+        if self.analysis_model in STRICT_ANALYSIS_MODELS:
+            kwargs["temperature"] = STRICT_ANALYSIS_TEMPERATURE
+        elif self.analysis_temperature is not None:
             kwargs["temperature"] = self.analysis_temperature
         return kwargs
 

@@ -70,3 +70,22 @@ def test_analysis_chat_openai_kwargs_include_temperature_when_configured():
     kwargs = config.analysis_chat_openai_kwargs("secret-key")
 
     assert kwargs["temperature"] == 0.5
+
+
+def test_analysis_chat_openai_kwargs_uses_only_supported_params_for_strict_models():
+    config = get_llm_config(
+        {
+            "ANALYZE_LLM_MODEL": "gpt-5.6-sol",
+            "ANALYZE_LLM_TEMPERATURE": "1",
+            "ANALYZE_LLM_PRESENCE_PENALTY": "0.2",
+            "ANALYZE_LLM_FREQUENCY_PENALTY": "0.4",
+        }
+    )
+
+    kwargs = config.analysis_chat_openai_kwargs("secret-key")
+
+    assert kwargs == {
+        "model": "gpt-5.6-sol",
+        "api_key": "secret-key",
+        "temperature": 1,
+    }
